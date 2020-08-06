@@ -5,6 +5,5 @@ authors = ["Andrew Rondeau <github@andrewrondeau.com>"]
 edition = "2018"
 
 [dependencies]
-url = "*"
-url_open = { git = "https://github.com/overdrivenpotato/url_open.git", rev = "5793e61bbf2d631236f9c744a6c1a8d666ae5d60" }
+webbrowser = "0.5.5"
 tiny_http = "0.5"

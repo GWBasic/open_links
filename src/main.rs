@@ -4,8 +4,6 @@
 
 
 extern crate tiny_http;
-extern crate url;
-extern crate url_open;
 
 use std::env;
 use std::io::BufReader;
@@ -13,8 +11,7 @@ use std::io::BufRead;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::fs::File;
 use tiny_http::{Header, Server, Response};
-use url::Url;
-use url_open::UrlOpen;
+use webbrowser;
 
 fn main() {
 	let args: Vec<_> = env::args().collect();
@@ -44,19 +41,11 @@ fn main() {
     		return;
     	}
     };
-            	
-    let server_url_result = Url::parse(format!(
+    
+    let server_url = format!(
     	"http://{}:{}",
     	server.server_addr().ip(),
-    	server.server_addr().port()).as_str());
-    
-	let server_url = match server_url_result {
-    	Ok(server_url) => server_url,
-    	Err(err) => {
-    		println!("Can not parse server address: {}", err);
-	    	return;
-    	}
-    };
+    	server.server_addr().port());
     
     println!("Server is running at: {}", server_url);
     
@@ -76,7 +65,7 @@ fn main() {
     	}
 			
 		println!("Opening: {}", url); 
-    	server_url.open();
+    	webbrowser::open(&server_url);
 		
 		// blocks until the next request is received
 	    let request = match server.recv() {

@@ -65,7 +65,7 @@ fn main() {
     	}
 			
 		println!("Opening: {}", url); 
-    	webbrowser::open(&server_url);
+    	webbrowser::open(&server_url).expect("could not open url");
 		
 		// blocks until the next request is received
 	    let request = match server.recv() {

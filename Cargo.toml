@@ -6,4 +6,5 @@ edition = "2018"
 
 [dependencies]
 webbrowser = "0.5.5"
-tiny_http = "0.5"
+tide = "0.14.0"
+async-std = { version = "1.6.0", features = ["attributes"] }

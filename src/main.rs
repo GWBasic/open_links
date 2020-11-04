@@ -1,5 +1,8 @@
+extern crate futures;
 extern crate tide;
 
+use futures::future::poll_fn;
+use futures::task::Poll;
 use std::collections::VecDeque;
 use std::env;
 use std::io::BufReader;
@@ -11,6 +14,7 @@ use tide::{Redirect, Request};
 //use webbrowser;
 
 static mut static_url_queue: Option<VecDeque<String>> = None;
+static mut static_server_url: Option<String> = None;
 
 #[async_std::main]
 async fn main()  -> tide::Result<()> {
@@ -63,41 +67,34 @@ async fn main()  -> tide::Result<()> {
 
 		println!("Server is running at: {}", server_url);
 
-		// TODO: Copy & paste
-		let url = url_queue.get(0).unwrap();
-		println!("Opening: {}", url);
-		webbrowser::open(&server_url).expect("could not open url");
-
 		unsafe {
 			static_url_queue = Some(url_queue);
+			static_server_url = Some(server_url);
 		}
 
-			// Need a way to stop the server
+		open_url();
+
+		// Need a way to stop the server
 
 		task.await?;
 	}
     Ok(())
 }
 
-async fn serve(mut req: Request<()>) -> tide::Result {
+async fn serve(_req: Request<()>) -> tide::Result {
 
 	unsafe {
 		let mut url_queue = static_url_queue.take().unwrap();
 
 		let url = url_queue.pop_front().unwrap();
 
-		if url_queue.len() == 0 {
-			// Need a way to stop the server
-		}
+		let more_urls = url_queue.len() > 0;
 
 		static_url_queue = Some(url_queue);
 
-
-	// TODO: Copy & paste
-	let url = url_queue.get(0).unwrap();
-	println!("Opening: {}", url);
-	webbrowser::open(&server_url).expect("could not open url");
-
+		if more_urls {
+			open_url();
+		}
 
 		Ok(Redirect::new(url).into())
 	}
@@ -106,11 +103,29 @@ async fn serve(mut req: Request<()>) -> tide::Result {
 	//Ok("oohhhhh kaaaaaay")//url)
 }
 
-/*fn main() {
+fn open_url() {
+	unsafe {
+		let url_queue = static_url_queue.take().unwrap();
+
+		match &static_server_url {
+			Some(server_url) => {
+				let url = url_queue.get(0).unwrap();
+				println!("Opening: {}", url);
+				webbrowser::open(&server_url).expect("could not open url");
+			},
+			None => {}
+		}
+
+		static_url_queue = Some(url_queue);
+	}
+}
+
+/*
+#[async_std::main]
+async fn main()  -> tide::Result<()> {
 	let args: Vec<_> = env::args().collect();
     if args.len() != 2 {
-    	println!("Pass the name of a file with links to open. Each link must be its own line");
-    	return;
+    	panic!("Pass the name of a file with links to open. Each link must be its own line");
     }
 
     let ref filename = args[1];
@@ -118,36 +133,55 @@ async fn serve(mut req: Request<()>) -> tide::Result {
     let f = match File::open(filename) {
     	Ok(f) => f,
     	Err(err) => {
-	    	println!("Can not open {}: {}", filename, err);
-    		return;
+	    	panic!("Can not open {}: {}", filename, err);
     	}
     };
     
     let file = BufReader::new(&f);
-    
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    
-    let server = match Server::http(address) {
-    	Ok(f) => f,
-    	Err(err) => {
-	    	println!("Can not start web server: {}", err);
-    		return;
-    	}
-    };
-    
-    let server_url = format!(
-    	"http://{}:{}",
-    	server.server_addr().ip(),
-    	server.server_addr().port());
-    
-    println!("Server is running at: {}", server_url);
+
+	let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
+	let listener = TcpListener::bind(address)?;
+
+	let url_poll: Poll<String> = Poll::Pending;
+	let url_future = poll_fn(|_| {
+		let result = url_poll;
+		url_poll = Poll::Pending;
+		result
+	});
+
+	let req_poll: Poll<()> = Poll::Pending;
+	let req_future = poll_fn(|_| {
+		let result = req_poll;
+		req_poll = Poll::Pending;
+		result
+	});
+
+	let mut app = tide::new();
+	app.at("/").get(|req: Request<()>| async {
+		let url = url_future.await;
+    	
+    	println!("Incoming request: {}, should redirect to: {}", req.url(), url);
+
+		req_poll = Poll::Ready(());
+		Ok(Redirect::new(url).into())
+	});
+
+	let local_addr = listener.local_addr().unwrap();
+	let task = app.listen(listener);
+		
+	let server_url = format!(
+		"http://{}:{}",
+		local_addr.ip(),
+		local_addr.port());
+
+	println!("Server is running at: {}", server_url);
+
     
     'lines_loop: for line in file.lines() {
         let l = match line {
         	Ok(l) => l,
         	Err(err) => {
-	    		println!("Error reading {}: {}", filename, err);
-	    		return;
+	    		panic!("Error reading {}: {}", filename, err);
     		}
         };
 
@@ -158,35 +192,13 @@ async fn serve(mut req: Request<()>) -> tide::Result {
     	}
 			
 		println!("Opening: {}", url); 
+		url_poll = Poll::Ready(url.to_string());
     	webbrowser::open(&server_url).expect("could not open url");
 		
 		// blocks until the next request is received
-	    let request = match server.recv() {
-    	    Ok(rq) => rq,
-        	Err(e) => {
-        		println!("Error with incoming http request: {}", e);
-        		continue 'lines_loop;
-        	}
-    	};
-    	
-    	println!("Incoming request: {}, should redirect to: {}", request.url(), url);
-		
-		let mut headers = Vec::<Header>::new();
-		headers.push(Header::from_bytes(&b"Location"[..], url.as_bytes()).unwrap());
-		
-		let response = Response::new(
-			tiny_http::StatusCode::from(303),
-			headers,
-			"".as_bytes(),
-			Some(0),
-			None);
-			
-		match request.respond(response) {
-        	Err(e) => {
-        		println!("Error with outgoing http request: {}", e);
-        	},
-        	_ => { }
-		};
-    }
+	    req_future.await;
+	}
+	
+	Ok(())
 }
 */

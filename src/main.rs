@@ -3,19 +3,81 @@ extern crate tide;
 
 //use futures::future::poll_fn;
 //use futures::task::Poll;
-use std::collections::VecDeque;
-use std::env;
-use async_std::fs::File;
-use async_std::io::BufReader;
+use async_std::{
+	fs::File,
+	io::BufReader,
+	net::{IpAddr, Ipv4Addr, TcpListener, SocketAddr},
+	task
+};
 //use async_std::io::BufRead;
 use async_std::prelude::*;
-use std::net::{IpAddr, Ipv4Addr, TcpListener, SocketAddr};
+use std::{
+	collections::VecDeque,
+	env,
+	pin::Pin,
+	sync::{Arc, Mutex},
+	task::{Context, Poll, Waker},
+};
 use tide::{Redirect, Request};
 //use tide::prelude::*;
 //use webbrowser;
 
+static mut allcomplete_future: Option<TaskCompletionSource<()>> = None;
 static mut static_url_queue: Option<VecDeque<String>> = None;
 static mut static_server_url: Option<String> = None;
+
+// Based off of https://rust-lang.github.io/async-book/02_execution/03_wakeups.html
+#[derive(Clone)]
+pub struct TaskCompletionSource<T> {
+	shared_state: Arc<Mutex<TaskCompletionState<T>>>
+}
+
+struct TaskCompletionState<T> {
+	/// None while the task is running, Some when the task is complete
+	result: Option<T>,
+
+	/// Set if a waker needs to be called when the result is set
+	waker: Option<Waker>
+}
+
+impl<T> TaskCompletionSource<T> {
+	pub fn new() -> TaskCompletionSource<T> {
+		TaskCompletionSource {
+			shared_state: Arc::new(Mutex::new(TaskCompletionState {
+				result: None,
+				waker: None
+			}))
+		}
+	}
+
+	pub fn complete(&self, result: T) {
+		let mut shared_state = self.shared_state.lock().unwrap();
+
+		shared_state.result = Some(result);
+		if let Some(waker) = shared_state.waker.take() {
+			waker.wake()
+		}
+	}
+}
+
+impl<T> Future for TaskCompletionSource<T> {
+	type Output = T;
+
+	fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+		let mut shared_state = self.shared_state.lock().unwrap();
+
+		match &shared_state.result {
+			Some(_) => {
+				let result = shared_state.result.take().unwrap();
+				Poll::Ready(result)
+			},
+			None => {
+				shared_state.waker = Some(cx.waker().clone());
+				Poll::Pending
+			}
+		}
+	}
+}
 
 #[async_std::main]
 async fn main()  -> tide::Result<()> {
@@ -51,8 +113,12 @@ async fn main()  -> tide::Result<()> {
 
 	if url_queue.len() > 0 {
 
+		unsafe {
+			allcomplete_future = Some(TaskCompletionSource::new());
+		}
+
 		let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-		let listener = TcpListener::bind(address)?;
+		let listener = TcpListener::bind(address).await?;
 
 		let mut app = tide::new();
 		app.at("/").get(serve);
@@ -76,11 +142,25 @@ async fn main()  -> tide::Result<()> {
 
 		// Need a way to stop the server
 
-		task.await?;
+		//task.await?;
+
+		// Looks like the server won't run until something calls Poll on the future?
+		// TODO: Try calling poll directly?
+		task::spawn(async {
+			task.await
+		});
+
+		unsafe {
+			let future = allcomplete_future.clone().unwrap();
+			future.await;
+		}
+
+		panic!("Tide doesn't support shutting down the server yet, see https://github.com/http-rs/tide/issues/528");
 	}
     Ok(())
 }
 
+// TODO: Make this a lambda
 async fn serve(_req: Request<()>) -> tide::Result {
 
 	unsafe {
@@ -94,6 +174,9 @@ async fn serve(_req: Request<()>) -> tide::Result {
 
 		if more_urls {
 			open_url();
+		} else {
+			let future = allcomplete_future.clone().unwrap();
+			future.complete(());
 		}
 
 		Ok(Redirect::new(url).into())

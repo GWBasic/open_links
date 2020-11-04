@@ -1,7 +1,7 @@
 extern crate futures;
 extern crate tide;
 
-//use futures::future::poll_fn;
+//use futures::future::ok;
 //use futures::task::Poll;
 use async_std::{
 	fs::File,
@@ -12,19 +12,19 @@ use async_std::{
 //use async_std::io::BufRead;
 use async_std::prelude::*;
 use std::{
+	//cell::RefCell,
 	collections::VecDeque,
 	env,
 	pin::Pin,
 	sync::{Arc, Mutex},
 	task::{Context, Poll, Waker},
 };
-use tide::{Redirect, Request};
+use tide::{Redirect, /*Request*/};
 //use tide::prelude::*;
 //use webbrowser;
 
-static mut allcomplete_future: Option<TaskCompletionSource<()>> = None;
-static mut static_url_queue: Option<VecDeque<String>> = None;
-static mut static_server_url: Option<String> = None;
+//static mut allcomplete_future: Option<TaskCompletionSource<()>> = None;
+//static mut static_server_url: Option<String> = None;
 
 // Based off of https://rust-lang.github.io/async-book/02_execution/03_wakeups.html
 #[derive(Clone)]
@@ -113,32 +113,51 @@ async fn main()  -> tide::Result<()> {
 
 	if url_queue.len() > 0 {
 
-		unsafe {
-			allcomplete_future = Some(TaskCompletionSource::new());
-		}
+		let allcomplete_future = TaskCompletionSource::new();
 
 		let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
 		let listener = TcpListener::bind(address).await?;
 
 		let mut app = tide::new();
-		app.at("/").get(serve);
 
 		let local_addr = listener.local_addr().unwrap();
-		let task = app.listen(listener);
-			
 		let server_url = format!(
 			"http://{}:{}",
 			local_addr.ip(),
 			local_addr.port());
 
+		let url_queue = Arc::new(Mutex::new(url_queue));
+		let c_url_queue = url_queue.clone();
+		let c_server_url = server_url.clone();
+		let c_allcomplete_future = allcomplete_future.clone();
+		app.at("/").get(move |_| {
+
+			let mut url_queue = c_url_queue.lock().unwrap();
+			let url = url_queue.pop_front().unwrap();
+	
+			if url_queue.len() > 0 {
+				open_url(&c_server_url, url_queue.get(0).unwrap());
+			} else {
+				c_allcomplete_future.complete(());
+			}
+	
+			let result: tide::Result<Redirect<String>> = Ok(Redirect::new(url).into());
+			let tcrs = TaskCompletionSource::new();
+			tcrs.complete(result);
+			tcrs
+
+			// TODO: This should be ok(result), not sure why it won't compile
+			//ok(result)
+		});
+
+		let task = app.listen(listener);
+			
 		println!("Server is running at: {}", server_url);
 
-		unsafe {
-			static_url_queue = Some(url_queue);
-			static_server_url = Some(server_url);
+		{
+			let url_queue = url_queue.lock().unwrap();
+			open_url(&server_url, url_queue.get(0).unwrap());
 		}
-
-		open_url();
 
 		// Need a way to stop the server
 
@@ -150,16 +169,14 @@ async fn main()  -> tide::Result<()> {
 			task.await
 		});
 
-		unsafe {
-			let future = allcomplete_future.clone().unwrap();
-			future.await;
-		}
+		allcomplete_future.await;
 
 		panic!("Tide doesn't support shutting down the server yet, see https://github.com/http-rs/tide/issues/528");
 	}
     Ok(())
 }
 
+/*
 // TODO: Make this a lambda
 async fn serve(_req: Request<()>) -> tide::Result {
 
@@ -181,23 +198,11 @@ async fn serve(_req: Request<()>) -> tide::Result {
 
 		Ok(Redirect::new(url).into())
 	}
-}
+}*/
 
-fn open_url() {
-	unsafe {
-		let url_queue = static_url_queue.take().unwrap();
-
-		match &static_server_url {
-			Some(server_url) => {
-				let url = url_queue.get(0).unwrap();
-				println!("Opening: {}", url);
-				webbrowser::open(&server_url).expect("could not open url");
-			},
-			None => {}
-		}
-
-		static_url_queue = Some(url_queue);
-	}
+fn open_url(server_url: &str, url: &str) {
+	println!("Opening: {}", url);
+	webbrowser::open(&server_url).expect("could not open url");
 }
 
 /*

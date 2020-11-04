@@ -1,14 +1,15 @@
 extern crate futures;
 extern crate tide;
 
-use futures::future::poll_fn;
-use futures::task::Poll;
+//use futures::future::poll_fn;
+//use futures::task::Poll;
 use std::collections::VecDeque;
 use std::env;
-use std::io::BufReader;
-use std::io::BufRead;
+use async_std::fs::File;
+use async_std::io::BufReader;
+//use async_std::io::BufRead;
+use async_std::prelude::*;
 use std::net::{IpAddr, Ipv4Addr, TcpListener, SocketAddr};
-use std::fs::File;
 use tide::{Redirect, Request};
 //use tide::prelude::*;
 //use webbrowser;
@@ -28,10 +29,11 @@ async fn main()  -> tide::Result<()> {
 
     let ref filename = args[1];
 
-    let f = File::open(filename).unwrap();
-	let file = BufReader::new(&f);
+	let file = File::open(filename).await?;
+	let file_reader = BufReader::new(file);
+	let mut lines = file_reader.lines();
 
-	'lines_loop: for line in file.lines() {
+	while let Some(line) = lines.next().await {
         let l = match line {
         	Ok(l) => l,
         	Err(err) => {
@@ -42,11 +44,9 @@ async fn main()  -> tide::Result<()> {
 		let url = l.trim();
 		let url = format!("{}", url);
 
-		if url.len() < 1 {
-    		continue 'lines_loop;
+		if url.len() > 0 {
+			url_queue.push_back(url);
 		}
-
-		url_queue.push_back(url);
 	}
 
 	if url_queue.len() > 0 {
@@ -98,9 +98,6 @@ async fn serve(_req: Request<()>) -> tide::Result {
 
 		Ok(Redirect::new(url).into())
 	}
-
-
-	//Ok("oohhhhh kaaaaaay")//url)
 }
 
 fn open_url() {

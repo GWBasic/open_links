@@ -121,29 +121,18 @@ async fn main()  -> tide::Result<()> {
 		c_result_future.clone()
 	});
 
-	let task = app.listen(listener);
-		
 	println!("Server is running at: {}", server_url);
-	// Need a way to stop the server
 
-	//task.await?;
-
-	// Looks like the server won't run until something calls Poll on the future?
-	// TODO: Try calling poll directly?
-	task::spawn(async {
-		task.await
-	});
+	// Looks like the server doesn't run until it's awaited
+	task::spawn(async {app.listen(listener).await});
 
 	while let Some(line) = lines.next().await {
-		let l = match line {
-			Ok(l) => l,
+		let url = match line {
+			Ok(line) => line.trim().to_string(),
 			Err(err) => {
 				panic!("Error reading {}: {}", filename, err);
 			}
 		};
-
-		// TODO: Need a better way to copy the slice
-		let url = format!("{}", l.trim());
 
 		if url.len() > 0 {
 			println!("Opening: {}", url);
@@ -154,6 +143,8 @@ async fn main()  -> tide::Result<()> {
 		}
 	}
 
+	// TODO: Need a way to stop the server
+	// Try shutting down the listener
 	panic!("Tide doesn't support shutting down the server yet, see https://github.com/http-rs/tide/issues/528");
 	//Ok(())
 }

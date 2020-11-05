@@ -27,7 +27,6 @@ use tide::{Redirect, /*Request*/};
 //static mut static_server_url: Option<String> = None;
 
 // Based off of https://rust-lang.github.io/async-book/02_execution/03_wakeups.html
-#[derive(Clone)]
 pub struct TaskCompletionSource<T> {
 	shared_state: Arc<Mutex<TaskCompletionState<T>>>
 }
@@ -45,6 +44,15 @@ impl<T> TaskCompletionSource<T> {
 		TaskCompletionSource {
 			shared_state: Arc::new(Mutex::new(TaskCompletionState {
 				result: None,
+				waker: None
+			}))
+		}
+	}
+
+	pub fn from(result: T) -> TaskCompletionSource<T> {
+		TaskCompletionSource {
+			shared_state: Arc::new(Mutex::new(TaskCompletionState {
+				result: Some(result),
 				waker: None
 			}))
 		}
@@ -79,6 +87,14 @@ impl<T> Future for TaskCompletionSource<T> {
 	}
 }
 
+impl<T> Clone for TaskCompletionSource<T> {
+	fn clone(&self) -> Self {
+		TaskCompletionSource {
+			shared_state: self.shared_state.clone()
+		}
+	}
+}
+
 #[async_std::main]
 async fn main()  -> tide::Result<()> {
 
@@ -95,7 +111,7 @@ async fn main()  -> tide::Result<()> {
 	let file_reader = BufReader::new(file);
 	let mut lines = file_reader.lines();
 
-	while let Some(line) = lines.next().await {
+	/*while let Some(line) = lines.next().await {
         let l = match line {
         	Ok(l) => l,
         	Err(err) => {
@@ -111,9 +127,9 @@ async fn main()  -> tide::Result<()> {
 		}
 	}
 
-	if url_queue.len() > 0 {
+	if url_queue.len() > 0 {*/
 
-		let allcomplete_future = TaskCompletionSource::new();
+		//let allcomplete_future = TaskCompletionSource::new();
 
 		let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
 		let listener = TcpListener::bind(address).await?;
@@ -126,13 +142,23 @@ async fn main()  -> tide::Result<()> {
 			local_addr.ip(),
 			local_addr.port());
 
+		let request_future = TaskCompletionSource::<()>::new();
+		let result_future = TaskCompletionSource::<tide::Result<Redirect<String>>>::new();
+
 		let url_queue = Arc::new(Mutex::new(url_queue));
 		let c_url_queue = url_queue.clone();
 		let c_server_url = server_url.clone();
-		let c_allcomplete_future = allcomplete_future.clone();
+		//let c_allcomplete_future = allcomplete_future.clone();
+		let c_request_future = request_future.clone();
+		let c_result_future = result_future.clone();
 		app.at("/").get(move |_| {
 
-			let mut url_queue = c_url_queue.lock().unwrap();
+			c_request_future.complete(());
+			//let f: TaskCompletionSource::<tide::Result<Redirect<String>>> = c_result_future.clone();
+			//f
+			c_result_future.clone()
+
+			/*let mut url_queue = c_url_queue.lock().unwrap();
 			let url = url_queue.pop_front().unwrap();
 	
 			if url_queue.len() > 0 {
@@ -144,20 +170,29 @@ async fn main()  -> tide::Result<()> {
 			let result: tide::Result<Redirect<String>> = Ok(Redirect::new(url).into());
 			let tcrs = TaskCompletionSource::new();
 			tcrs.complete(result);
-			tcrs
+			tcrs*/
 
-			// TODO: This should be ok(result), not sure why it won't compile
-			//ok(result)
+			/*c_request_future.complete(());
+			let url = url_future.await;
+
+			let result: tide::Result<Redirect<String>> = Ok(Redirect::new(url).into());
+			//TaskCompletionSource::from(result)
+
+			result*/
+
+/*			let tcrs = TaskCompletionSource::new();
+			tcrs.complete(result);
+			tcrs*/
 		});
 
 		let task = app.listen(listener);
 			
 		println!("Server is running at: {}", server_url);
 
-		{
+		/*{
 			let url_queue = url_queue.lock().unwrap();
 			open_url(&server_url, url_queue.get(0).unwrap());
-		}
+		}*/
 
 		// Need a way to stop the server
 
@@ -169,10 +204,31 @@ async fn main()  -> tide::Result<()> {
 			task.await
 		});
 
-		allcomplete_future.await;
+		//allcomplete_future.await;
+
+		while let Some(line) = lines.next().await {
+			let l = match line {
+				Ok(l) => l,
+				Err(err) => {
+					panic!("Error reading {}: {}", filename, err);
+				}
+			};
+	
+			//let url = l.trim();
+			// TODO: Need a better way to copy the slice
+			let url = format!("{}", l.trim());
+	
+			if url.len() > 0 {
+				println!("Opening: {}", url);
+				webbrowser::open(&server_url).expect("could not open url");
+				
+				request_future.clone().await;
+				result_future.complete(Ok(Redirect::new(url).into()));
+			}
+		}
 
 		panic!("Tide doesn't support shutting down the server yet, see https://github.com/http-rs/tide/issues/528");
-	}
+	//}
     Ok(())
 }
 
@@ -200,10 +256,10 @@ async fn serve(_req: Request<()>) -> tide::Result {
 	}
 }*/
 
-fn open_url(server_url: &str, url: &str) {
+/*fn open_url(server_url: &str, url: &str) {
 	println!("Opening: {}", url);
 	webbrowser::open(&server_url).expect("could not open url");
-}
+}*/
 
 /*
 #[async_std::main]

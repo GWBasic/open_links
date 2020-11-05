@@ -112,14 +112,14 @@ async fn main()  -> tide::Result<()> {
 		local_addr.ip(),
 		local_addr.port());
 
-	let request_future = TaskCompletionSource::<()>::new(); // TODO: Should include the request
+	let request_future = TaskCompletionSource::new();
 	let result_future = TaskCompletionSource::<tide::Result<Redirect<String>>>::new();
 
 	let c_request_future = request_future.clone();
 	let c_result_future = result_future.clone();
-	app.at("/").get(move |_| {
+	app.at("/").get(move |req| {
 
-		c_request_future.complete(());
+		c_request_future.complete(req);
 		c_result_future.clone()
 	});
 

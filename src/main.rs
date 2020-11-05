@@ -1,20 +1,22 @@
 extern crate futures;
 extern crate tide;
 
-use async_std::{
-	fs::File,
-	io::BufReader,
-	net::{IpAddr, Ipv4Addr, TcpListener, SocketAddr},
-	task
+use {
+	async_std::{
+		fs::File,
+		io::BufReader,
+		net::{IpAddr, Ipv4Addr, TcpListener, SocketAddr},
+		prelude::*,
+		task
+	},
+	std::{
+		env,
+		pin::Pin,
+		sync::{Arc, Mutex},
+		task::{Context, Poll, Waker},
+	},
+	tide::Redirect
 };
-use async_std::prelude::*;
-use std::{
-	env,
-	pin::Pin,
-	sync::{Arc, Mutex},
-	task::{Context, Poll, Waker},
-};
-use tide::Redirect;
 
 // Based off of https://rust-lang.github.io/async-book/02_execution/03_wakeups.html
 pub struct TaskCompletionSource<T> {
